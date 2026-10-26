@@ -1,0 +1,25 @@
+# 本地私有
+.env
+# 运行时生成
+data/*.db
+data/*.db-shm
+data/*.db-wal
+# 用户数据：上传的文件源、按项目建的本地文件夹
+data/uploads/
+data/projects/
+# 日志与探测残留
+*.log
+probe_*.json
+temp_*.json
+# 前端
+web/node_modules/
+web/dist/
+# 界面截图：开发期素材，文档未引用
+shots/
+web/shots/
+# AI 工具的本地记忆
+.codebuddy/
+# 测试残留
+tests/_*.db*
+__pycache__/
+.pytest_cache/

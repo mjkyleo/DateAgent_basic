@@ -1,0 +1,91 @@
+/* ---------------- 任务清单（抽屉面板 + 建议"加入清单"入口） ---------------- */
+.task-panel { display: flex; flex-direction: column; gap: 8px; }
+.task-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap; }
+
+.task-list { display: flex; flex-direction: column; gap: 5px; list-style: none; }
+.task-row { background: var(--panel); border: 1px solid var(--line); border-left-width: 2px;
+  border-left-color: var(--ink-3); border-radius: var(--r-sm); padding: 6px 8px; }
+/* 状态用左侧色条双重编码，扫一眼就知道哪条还欠着、哪条跑挂了 */
+.task-row.is-done { border-left-color: var(--ok); }
+.task-row.is-failed { border-left-color: var(--bad); }
+.task-row.is-running { border-left-color: var(--pending); }
+.task-row.is-done .task-main b { color: var(--ink-3); text-decoration: line-through; }
+
+.task-line { display: flex; align-items: flex-start; gap: 6px; }
+.task-pick { flex: none; margin-top: 3px; }
+.task-order { flex: none; display: flex; flex-direction: column; gap: 1px; }
+.task-arrow { border: 1px solid var(--line); background: var(--panel); color: var(--ink-3);
+  border-radius: var(--r-sm); width: 18px; height: 15px; line-height: 1; cursor: pointer;
+  font-size: var(--fs-mini); padding: 0; }
+.task-arrow:hover:not(:disabled) { color: var(--accent); border-color: var(--accent-line);
+  background: var(--accent-soft); }
+.task-arrow:disabled { opacity: .35; cursor: default; }
+
+.task-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.task-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.task-head b { font-size: var(--fs-small); font-weight: 600; }
+.task-from { font-size: var(--fs-tiny); color: var(--ink-3); }
+.task-note { font-size: var(--fs-small); color: var(--ink-2); line-height: 1.5; }
+.task-sql { font-size: var(--fs-tiny); color: var(--ink); }
+.task-sql code { font-family: var(--mono); background: var(--panel-2);
+  border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 1px 5px;
+  display: block; white-space: pre-wrap; word-break: break-word; }
+.task-need { font-size: var(--fs-tiny); color: var(--pending); }
+.task-ev { font-size: var(--fs-tiny); color: var(--ink-3); }
+.task-ev code { font-family: var(--mono); }
+.task-result-line { font-size: var(--fs-tiny); color: var(--ink-3); font-family: var(--mono); }
+.task-result-line .is-bad { color: var(--bad); }
+
+.task-acts { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  justify-content: flex-end; }
+.task-del { border: none; background: none; cursor: pointer; color: var(--ink-3);
+  padding: 2px 4px; border-radius: var(--r-sm); }
+.task-del:hover { color: var(--bad); background: var(--bad-soft); }
+.task-del svg { width: 11px; height: 11px; }
+
+.task-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px;
+  padding: 7px 8px; background: var(--panel-2); border: 1px dashed var(--line);
+  border-radius: var(--r-sm); }
+
+.task-block { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.task-outcome { display: flex; flex-direction: column; gap: 3px; list-style: none; }
+.task-outcome li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-size: var(--fs-tiny); color: var(--ink-2); }
+.task-outcome li b { font-size: var(--fs-small); color: var(--ink); font-weight: 600; }
+.task-outcome li.is-failed span { color: var(--bad); }
+.task-outcome li.is-done span { color: var(--ok); }
+.task-outcome li.is-skip span { color: var(--pending); }
+
+.task-run { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-top: 2px; border-top: 1px solid var(--line-2); }
+.task-review { display: flex; flex-direction: column; gap: 5px; width: 100%;
+  padding: 8px; background: var(--pending-soft); border: 1px solid var(--pending-line);
+  border-radius: var(--r-sm); }
+.task-review > b { font-size: var(--fs-small); font-weight: 600; }
+.task-review-list { display: flex; flex-direction: column; gap: 4px; list-style: none;
+  counter-reset: t; }
+.task-review-list li { display: flex; flex-direction: column; gap: 1px; }
+.task-review-list li span { font-size: var(--fs-small); }
+.task-review-list li code { font-family: var(--mono); font-size: var(--fs-tiny); color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 3px 6px; white-space: pre-wrap; word-break: break-word; }
+.task-ack { display: flex; align-items: center; gap: 5px; font-size: var(--fs-small);
+  color: var(--ink); cursor: pointer; }
+
+/* 建议/改进项右侧的"加入清单"：靠右贴齐，点过之后变灰不可重复加 */
+.advice-add, .plan-add { margin-left: auto; flex: none; border: 1px solid var(--line);
+  background: var(--panel); color: var(--accent); border-radius: var(--r-sm);
+  padding: 0 6px; font-size: var(--fs-tiny); cursor: pointer; display: inline-flex;
+  align-items: center; gap: 3px; }
+.advice-add:hover:not(:disabled), .plan-add:hover:not(:disabled) {
+  background: var(--accent-soft); border-color: var(--accent-line); }
+.advice-add:disabled, .plan-add:disabled, .advice-add.is-done, .plan-add.is-done {
+  color: var(--ink-3); cursor: default; background: var(--panel-2); }
+.plan-add svg, .advice-add svg { width: 9px; height: 9px; }
+
+/* 输入区入口上的未完成条数角标 */
+.entry-badge { font-family: var(--mono); font-size: var(--fs-tiny); color: var(--accent);
+  background: var(--accent-soft); border: 1px solid var(--accent-line);
+  border-radius: 999px; padding: 0 4px; }

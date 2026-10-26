@@ -1,0 +1,169 @@
+/* 基础重置、全局排版、按钮/输入框、动效关键帧。
+   动效取自 Remotion 的 timing 原则（本项目是 Web 仪表盘，用 CSS 实现而非帧驱动）：
+   - 统一缓动 cubic-bezier(0.16, 1, 0.3, 1)（ease-out-expo 手感，起步快、收尾稳）；
+   - 交互反馈 150ms、进场 200ms，再长就会让人觉得"慢"；
+   - 优先动 scale/translate/opacity（合成层属性，不触发重排）；
+   - prefers-reduced-motion 时全部关掉。 */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, p, ul, ol, figure { margin: 0; }
+ul, ol { list-style: none; padding: 0; }
+button { font: inherit; color: inherit; }
+input, textarea, select { font: inherit; color: inherit; }
+
+/* 数字一律等宽 + 表格数字位，列与列之间才能竖向对齐 */
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.num { text-align: right; }
+
+::selection { background: var(--accent-soft); }
+
+/* 滚动条：细而克制 */
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px;
+  border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: content-box; }
+
+/* ---------- 按钮：px-2.5 py-1 text-xs ---------- */
+/* btn-danger 与 btn-ghost 同一基底（默认中性、hover 转红）：
+   单独存在时它没有任何边框/内边距，会和别的按钮大小不一致。 */
+.btn-primary, .btn-ghost, .btn-danger {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  border-radius: var(--r);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.45;
+  cursor: pointer;
+  background: var(--panel);
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition: background-color var(--dur) ease-out, border-color var(--dur) ease-out,
+              color var(--dur) ease-out, transform 120ms ease-out;
+}
+/* 按钮内图标统一 12px，与文字基线对齐 */
+.btn-primary svg, .btn-ghost svg, .btn-danger svg { width: 12px; height: 12px; flex: none; }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+/* active:scale-[0.97] —— 按下有反馈，但不抢戏 */
+.btn-primary:active:not(:disabled) { transform: scale(.97); }
+.btn-ghost:hover:not(:disabled) { background: var(--panel-2); border-color: #cbd5e1; color: var(--ink); }
+.btn-ghost.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.btn-danger:hover:not(:disabled) { border-color: var(--bad-line); color: var(--bad);
+  background: var(--bad-soft); }
+.btn-sm { padding: 2px 8px; font-size: var(--fs-small); }
+.btn-xs { padding: 1px 6px; font-size: var(--fs-mini); gap: 4px; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ---------- 输入框：px-2.5 py-1.5 text-xs + ring-1 ---------- */
+input, textarea, select {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 5px 9px;
+  font-size: var(--fs-body);
+  background: var(--panel);
+  color: var(--ink);
+  transition: border-color var(--dur) ease-out, box-shadow var(--dur) ease-out;
+}
+input::placeholder, textarea::placeholder { color: var(--ink-3); }
+
+/* ---------- 文本与提示 ---------- */
+.note { font-size: var(--fs-body); color: var(--ink-2); }
+.note-bad { color: var(--bad); }
+.note-warn { color: var(--pending); }
+.note-ok { color: var(--ok); }
+.panel-hint { font-size: var(--fs-body); color: var(--ink-3); }
+.form-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ---------- 旋转指示器 ---------- */
+.spinner {
+  width: 11px; height: 11px; flex: none;
+  border: 1.5px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin .7s linear infinite;
+}
+.spinner-wrap { display: inline-flex; align-items: center; gap: 5px; }
+.spinner-label { font-size: var(--fs-small); color: var(--ink-3); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 动效 ---------- */
+/* 进场：淡入 + 上移 6px，200ms，ease-out-expo */
+@keyframes dd-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* 列表行进场：位移更小，密集列表里太大会显得散 */
+@keyframes dd-in-item {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* 骨架屏：微光扫过（比转圈更适合"块状内容"） */
+@keyframes dd-shimmer {
+  from { background-position: -180px 0; }
+  to { background-position: calc(180px + 100%) 0; }
+}
+/* 状态呼吸：进行中的节点 */
+@keyframes dd-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .55; }
+}
+
+.animate-in { animation: dd-in var(--dur-in) var(--ease) both; }
+/* 逐项进场：给子元素设 --i（序号），delay = 序号 * 28ms，最多约 8 项后就不再递增
+   （密集界面里整列等太久会显得卡） */
+.stagger > * { animation: dd-in-item 180ms var(--ease) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 28ms); }
+.stagger > *:nth-child(1) { --i: 0; }
+.stagger > *:nth-child(2) { --i: 1; }
+.stagger > *:nth-child(3) { --i: 2; }
+.stagger > *:nth-child(4) { --i: 3; }
+.stagger > *:nth-child(5) { --i: 4; }
+.stagger > *:nth-child(6) { --i: 5; }
+.stagger > *:nth-child(7) { --i: 6; }
+.stagger > *:nth-child(8) { --i: 7; }
+.stagger > *:nth-child(n + 9) { --i: 8; }
+
+.skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--line-2) 25%, #f8fafc 37%, var(--line-2) 63%);
+  background-size: 400px 100%;
+  animation: dd-shimmer 1.1s ease-in-out infinite;
+}
+.pulse { animation: dd-pulse 1.4s ease-in-out infinite; }
+
+/* 行内数字变化：值更新时轻微高亮一下，提示"这个数变了" */
+@keyframes dd-flash {
+  from { background-color: var(--accent-soft); }
+  to { background-color: transparent; }
+}
+.flash { animation: dd-flash 700ms ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2s; }
+  .animate-in, .stagger > *, .skeleton, .pulse, .flash { animation: none; }
+  * { transition-duration: .01ms !important; }
+}

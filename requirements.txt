@@ -1,0 +1,26 @@
+# 数据分析Agent MVP（basic/）最小依赖
+#
+# 说明：仓库根 pyproject.toml 是完整版 da-lite 的依赖（langgraph/duckdb/polars…），
+# 本 MVP 刻意不依赖那些重型包，单独列一份，便于只跑 basic/ 的场景。
+# 安装：pip install -r basic/requirements.txt
+
+# --- Web 框架 ---
+fastapi>=0.110
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9          # 文件上传（/api/datasource/file）
+
+# --- 数据模型 / SQL ---
+pydantic>=2.7
+sqlglot>=25                      # SQL AST 安全门（只读校验）
+sqlalchemy>=2.0                  # 适配器的连接与执行层
+
+# --- 数据源驱动 ---
+pymysql>=1.1                     # MySQL（mysql+pymysql://）
+# openpyxl 只在导入 XLSX 时需要，缺失时文件导入会给出明确提示
+openpyxl>=3.1
+
+# --- LLM（OpenAI 兼容端点；未配置时走规则兜底，可不装）---
+requests>=2.31
+
+# --- 测试 ---
+pytest>=8.0

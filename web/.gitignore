@@ -1,0 +1,7 @@
+node_modules
+dist
+# 本地运行日志（dev server / npm install 输出）
+dev.log
+install.log
+# 验证截图
+shots/

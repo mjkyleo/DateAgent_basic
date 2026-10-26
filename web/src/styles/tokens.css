@@ -1,0 +1,78 @@
+/* 设计变量：Data Dense（数据密集）风格。
+   三条硬约束贯穿全站：
+   1) 密度优先 —— 间距 4px 递增、表格行 ≤ py-2、正文 text-xs；
+   2) 数字等宽 —— 所有数值/ID/代码走 --mono + tabular-nums，保证列能竖向对齐扫描；
+   3) 状态彩色编码 —— green=active / yellow=pending / red=error / blue=info，
+      不读文字也能看出状态（徽章带同色圆点）。
+   圆角最大 6px、阴影只有一档且极淡、禁止装饰性渐变 —— 这些都写死在变量里，
+   组件层想用也用不出来。 */
+:root {
+  /* 主色（强调 / info 同源，但 info 单独一组用于"信息态"徽章） */
+  --accent: #3b82f6;
+  --accent-strong: #2563eb;
+  --accent-soft: #eff6ff;
+  --accent-line: #bfdbfe;
+
+  /* 语义色：green=active, yellow=pending, red=error, blue=info */
+  --ok: #15803d;
+  --ok-soft: #f0fdf4;
+  --ok-line: #bbf7d0;
+  --pending: #a16207;
+  --pending-soft: #fffbeb;
+  --pending-line: #fde68a;
+  --bad: #b91c1c;
+  --bad-soft: #fef2f2;
+  --bad-line: #fecaca;
+  --info: #1d4ed8;
+  --info-soft: #eff6ff;
+  --info-line: #bfdbfe;
+
+  /* 中性（slate） */
+  --ink: #1e293b;
+  --ink-2: #64748b;
+  --ink-3: #94a3b8;
+  --line: #e2e8f0;
+  --line-2: #eef2f6;
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --panel-2: #f8fafc;
+
+  /* 图表色板：与语义色同族，避免图表跳出整体色调 */
+  --chart-1: #3b82f6;
+  --chart-2: #22c55e;
+  --chart-3: #f59e0b;
+  --chart-4: #8b5cf6;
+  --chart-5: #06b6d4;
+  --chart-6: #ef4444;
+
+  /* 尺寸：圆角到 6px 为止（rounded 级别），不使用 rounded-xl+ */
+  --r-sm: 2px;
+  --r: 4px;
+  --r-lg: 6px;
+  /* 阴影只保留一档：浮层需要"在场"，但不需要重量感 */
+  --shadow-sm: 0 1px 2px #0f172a0f;
+  --shadow-md: 0 1px 3px #0f172a1a;
+
+  /* 字体 */
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* 字号刻度：10 / 10.5 / 11 / 12 / 13.5 / 15 / 18（hero） */
+  --fs-tiny: 10px;
+  --fs-mini: 10.5px;
+  --fs-small: 11px;
+  --fs-body: 12px;
+  --fs-mid: 13.5px;
+  --fs-h3: 15px;
+  --fs-hero: 18px;
+
+  /* 布局：侧栏更窄、内容列更宽（密度优先，屏幕能放更多行） */
+  --rail-w: 232px;
+  --content-max: 960px;
+
+  /* 动效：统一缓动与时长（150ms 交互反馈 / 200ms 进场） */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 150ms;
+  --dur-in: 200ms;
+}

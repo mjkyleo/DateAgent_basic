@@ -1,0 +1,164 @@
+/* 布局骨架：顶栏 + 左栏 + 舞台（滚动区 + 底部输入区）。
+   竖向三段用 flex 定死：滚动区 flex:1/min-height:0，输入区 flex:none ——
+   输入框因此结构性固定在底部，不随内容滚动。
+   Data Dense：全局间距压到 4px 档，输入区不再用渐变遮罩（渐变属装饰性视觉噪音），
+   改用一条实线边框区分区域。 */
+.workbench { height: 100%; display: flex; flex-direction: column; }
+.workbench-body { flex: 1; min-height: 0; display: flex; }
+
+/* ---------------- 顶栏 ---------------- */
+.topbar {
+  flex: none; height: 44px; display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.brand .mark { width: 20px; height: 20px; color: var(--accent); flex: none; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+.brand-text b { font-size: var(--fs-mid); font-weight: 600; letter-spacing: .2px; }
+.brand-text span { font-size: var(--fs-tiny); color: var(--ink-3); }
+.topbar-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* 顶栏的模型 chip 可点击（直达模型管理）：做成无边框按钮，只保留 chip 外观 */
+.topbar-model { border: none; background: none; padding: 0; cursor: pointer; flex: none;
+  border-radius: var(--r-sm); }
+.topbar-model:hover .chip { border-color: var(--accent-line); }
+
+.side-toggle {
+  width: 26px; height: 26px; display: grid; place-items: center; flex: none;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--panel);
+  color: var(--ink-2); cursor: pointer;
+  transition: background-color var(--dur) ease-out, border-color var(--dur) ease-out,
+              color var(--dur) ease-out;
+}
+.side-toggle:hover { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }
+.side-toggle svg { width: 15px; height: 15px; }
+
+/* ---------------- 左栏 ---------------- */
+.rail {
+  width: var(--rail-w); flex: none; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--panel); border-right: 1px solid var(--line);
+  overflow: hidden;
+  /* 收起：平移自身宽度（百分比 margin 相对容器宽，宽屏下会错位） */
+  transition: margin-left .18s var(--ease), opacity .14s ease-out;
+}
+.rail.is-hidden { margin-left: calc(-1 * var(--rail-w)); opacity: 0; pointer-events: none; }
+
+/* ---------------- 舞台 ---------------- */
+.stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.stage-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 16px 4px; }
+/* position:relative —— 让底部弹层（Sheet）以内容列为基准展开，宽度与正文一致 */
+.stage-inner { width: 100%; max-width: var(--content-max); margin: 0 auto;
+  position: relative;
+  display: flex; flex-direction: column; gap: 10px; }
+
+/* 输入停靠区：position:relative 让 Sheet 能以它为基准向上弹出 */
+.dock { flex: none; position: relative; padding: 6px 16px 12px;
+  background: var(--bg); border-top: 1px solid var(--line); }
+
+/* ---------------- 底部弹出面板 ---------------- */
+.sheet-mask { position: fixed; inset: 0; background: #0f172a26; z-index: 30; }
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: calc(100% - 4px); z-index: 31;
+  /* 480px 对"供应商接入"这类 6 字段表单太挤（一屏看不完，得先滚才知道有提交按钮）；
+     放宽到 620px/72vh 后仍给输入区留出空间，其余面板内容短，不受影响。 */
+  max-height: min(72vh, 620px); display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  animation: sheet-up .16s var(--ease);
+}
+@keyframes sheet-up { from { opacity: 0; transform: translateY(6px); } }
+.sheet-head { flex: none; display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--line-2); }
+.sheet-head b { font-size: var(--fs-mid); }
+.sheet-hint { font-size: var(--fs-small); color: var(--ink-3); margin-left: 8px; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+
+/* ---------------- 欢迎区 ---------------- */
+.welcome { padding: 14px 0 4px; display: flex; flex-direction: column; gap: 6px; }
+.welcome b { font-size: var(--fs-h3); font-weight: 600; letter-spacing: .2px; }
+.welcome p { font-size: var(--fs-body); color: var(--ink-2); max-width: 680px; }
+.suggest-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.suggest { font-size: var(--fs-small); padding: 3px 9px; border-radius: var(--r);
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); cursor: pointer;
+  transition: background-color var(--dur) ease-out, border-color var(--dur) ease-out,
+              color var(--dur) ease-out; }
+.suggest:hover { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }
+
+/* ---------------- 悬浮阶段导航（浮于页面之上，可收起） ----------------
+   fixed + z-index 20：始终浮在对话内容之上；低于弹层遮罩（30），
+   所以打开数据源/库表弹层时它会被遮住，不喧宾夺主。 */
+.nav-float {
+  position: fixed; right: 12px; top: 56px; z-index: 20;
+  width: 208px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  transition: width .16s var(--ease);
+}
+.nav-float.is-collapsed { width: 54px; padding: 6px; }
+
+.nav-toggle {
+  position: absolute; top: 8px; left: -11px;
+  width: 22px; height: 22px; display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: var(--panel); color: var(--ink-2); cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: color var(--dur) ease-out, border-color var(--dur) ease-out;
+}
+.nav-toggle:hover { border-color: var(--accent-line); color: var(--accent); }
+.nav-toggle svg { width: 12px; height: 12px; }
+
+.nav-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 6px; padding: 0 2px 6px; border-bottom: 1px solid var(--line-2); margin-bottom: 5px; }
+.nav-head b { font-size: var(--fs-small); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); }
+.nav-head span { font-size: var(--fs-tiny); color: var(--ink-3); font-family: var(--mono); }
+
+.nav-list { display: flex; flex-direction: column; gap: 1px; }
+.nav-node { display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 3px 6px; border: 1px solid transparent; border-radius: var(--r);
+  background: none; cursor: pointer; text-align: left;
+  transition: background-color var(--dur) ease-out, border-color var(--dur) ease-out; }
+.nav-node:hover { background: var(--panel-2); border-color: var(--line); }
+.nav-node.is-current { background: var(--accent-soft); border-color: var(--accent-line); }
+.nav-idx { width: 17px; height: 17px; flex: none; border-radius: var(--r-sm);
+  display: grid; place-items: center; font-size: var(--fs-tiny); font-weight: 600;
+  font-family: var(--mono);
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-2); }
+.nav-text { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.25; }
+.nav-text b { font-size: var(--fs-small); font-weight: 500; }
+.nav-text em { font-size: var(--fs-tiny); color: var(--ink-3); font-style: normal; }
+.nav-branch { margin-left: auto; font-size: var(--fs-small); color: var(--accent); }
+.nav-foot { font-size: var(--fs-tiny); color: var(--ink-3); padding: 5px 2px 0; }
+
+/* 收起态：只留一列状态圆点 */
+.nav-dots { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+.nav-dot { width: 24px; height: 24px; border-radius: var(--r); display: grid; place-items: center;
+  font-size: var(--fs-tiny); font-weight: 600; font-family: var(--mono); cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-2);
+  transition: border-color var(--dur) ease-out, color var(--dur) ease-out; }
+.nav-dot.is-current { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* 状态色：与徽章共用同一套语义色 */
+.nav-node.is-ok .nav-idx, .nav-dot.is-ok { border-color: var(--ok-line); background: var(--ok-soft); color: var(--ok); }
+.nav-node.is-running .nav-idx, .nav-dot.is-running { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.nav-node.is-await .nav-idx, .nav-dot.is-await { border-color: var(--pending-line); background: var(--pending-soft); color: var(--pending); }
+.nav-node.is-failed .nav-idx, .nav-dot.is-failed { border-color: var(--bad-line); background: var(--bad-soft); color: var(--bad); }
+.nav-node.is-stale .nav-idx, .nav-dot.is-stale { border-style: dashed; color: var(--ink-3); }
+
+/* ---------------- 响应式 ---------------- */
+/* 窄屏：内容区右侧留出圆点条的位置，避免文字被压在导航下面 */
+@media (max-width: 1180px) {
+  .stage-scroll { padding-right: 76px; }
+  .dock { padding-right: 76px; }
+}
+@media (max-width: 900px) {
+  .rail {
+    position: absolute; z-index: 25; height: 100%;
+    box-shadow: var(--shadow-md);
+  }
+  .rail.is-hidden { margin-left: calc(-1 * var(--rail-w)); }
+  .stage-scroll { padding: 10px 12px 4px; }
+  .dock { padding: 6px 12px 10px; }
+  .sheet { max-height: 68vh; }
+  .nav-float { top: auto; bottom: 84px; }
+}
