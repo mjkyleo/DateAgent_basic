@@ -21,6 +21,7 @@ from basic.api.meta_api import router as meta_router
 from basic.api.project_api import router as project_router
 from basic.api.provider_api import router as provider_router
 from basic.api.task_api import router as task_router
+from basic.api.write_api import router as write_router
 from basic.config.settings import settings
 from basic.core.query_executor import QueryExecutor
 from basic.storage.local_store import LocalStore
@@ -126,6 +127,7 @@ def create_app() -> FastAPI:
     app.include_router(project_router)
     app.include_router(provider_router)
     app.include_router(task_router)
+    app.include_router(write_router)
 
     @app.middleware("http")
     async def _access_log(request: Request, call_next):
@@ -144,8 +146,12 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz", tags=["ops"])
     def healthz():
+        """前端档位开关要看的东西：写总闸开没开、单次写入的行数上限是多少。
+        这两条只由环境变量决定，界面若不报，人只能点了预览才知道被拦。"""
         return {"status": "ok", "llm": settings.llm_label(),
-                "store": settings.store_path}
+                "store": settings.store_path,
+                "writes_enabled": bool(settings.allow_writes),
+                "write_max_affected_rows": int(settings.write_max_affected_rows)}
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception):

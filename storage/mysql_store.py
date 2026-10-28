@@ -114,9 +114,9 @@ class MysqlStore:
 
     # ------------------------------------------------------------ 建库建表
     def ensure_schema(self) -> None:
-        """幂等初始化：建库 + 两张表 + 索引。
+        """幂等初始化：建库 + 各表 + 索引。
 
-        刻意不用迁移框架：MVP 只有两张表，且全是 CREATE IF NOT EXISTS，
+        刻意不用迁移框架：表少且全是 CREATE IF NOT EXISTS，
         升级时加列走 _ensure_columns 的探测补列（与 SQLite 版同一思路）。
         注意列名一律反引号包裹——`sql`/`model` 在 MySQL 8.0 是保留字。
         """
@@ -213,6 +213,36 @@ class MysqlStore:
                     {_q('updated_at')} DATETIME NOT NULL,
                     KEY idx_tasks_project ({_q('project_id')},{_q('sort_order')}),
                     KEY idx_tasks_session ({_q('session_id')})
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            # 写操作审计：每一次写请求（含被拒的）都要留一行，否则"谁删了这张表"
+            # 无从追问。被拒的也记，是因为拒绝理由本身就是安全证据 —— 有人反复试探
+            # 越权档位时，只有 rejected 行能看出来。
+            # 连接凭据不在这张表里（只存 ds_id/ds_name），错误文本由上层先脱敏。
+            conn.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS sql_audit (
+                    {_q('id')} BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    {_q('session_id')} VARCHAR(32) NOT NULL DEFAULT '',
+                    {_q('ds_id')} INT NOT NULL DEFAULT 0,
+                    {_q('ds_name')} VARCHAR(128) NOT NULL DEFAULT '',
+                    {_q('target_db')} VARCHAR(128) NOT NULL DEFAULT '',
+                    {_q('statement_kind')} VARCHAR(16) NOT NULL DEFAULT '',
+                    {_q('sql')} MEDIUMTEXT,
+                    {_q('requested_tier')} VARCHAR(16) NOT NULL DEFAULT '',
+                    {_q('effective_tier')} VARCHAR(16) NOT NULL DEFAULT '',
+                    {_q('confirmed')} TINYINT(1) NOT NULL DEFAULT 0,
+                    {_q('destructive')} TINYINT(1) NOT NULL DEFAULT 0,
+                    {_q('estimated_rows')} INT NULL,
+                    {_q('affected_rows')} INT NULL,
+                    {_q('backup_table')} VARCHAR(64) NOT NULL DEFAULT '',
+                    {_q('rollback_sql')} MEDIUMTEXT,
+                    {_q('status')} VARCHAR(16) NOT NULL DEFAULT 'executed',
+                    {_q('error')} TEXT,
+                    {_q('cost_ms')} INT NOT NULL DEFAULT 0,
+                    {_q('created_at')} DATETIME NOT NULL,
+                    KEY idx_audit_created ({_q('created_at')}),
+                    KEY idx_audit_session ({_q('session_id')}),
+                    KEY idx_audit_ds ({_q('ds_id')},{_q('created_at')})
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """))
         self._ensure_columns()
@@ -759,6 +789,87 @@ class MysqlStore:
                 "sort_order": int(row[10] or 0),
                 "last_result": _load_json(row[11]), "session_id": row[12] or "",
                 "created_at": _iso(row[13]), "updated_at": _iso(row[14])}
+
+    # ============================================================ 写操作审计
+    _AUDIT_COLS = ",".join(_q(c) for c in (
+        "id", "session_id", "ds_id", "ds_name", "target_db", "statement_kind",
+        "sql", "requested_tier", "effective_tier", "confirmed", "destructive",
+        "estimated_rows", "affected_rows", "backup_table", "rollback_sql",
+        "status", "error", "cost_ms", "created_at"))
+
+    #: 三种就够：跑成了 / 安检或权限拒了 / 真跑到引擎那步失败了。
+    #: "拒"必须是一等状态，不然审计表看起来全是 executed，看不出有人在试探越权。
+    AUDIT_STATUSES = ("executed", "rejected", "failed")
+
+    def add_audit(self, *, sql: str, status: str, ds_id: int = 0,
+                  ds_name: str = "", target_db: str = "", session_id: str = "",
+                  statement_kind: str = "", requested_tier: str = "",
+                  effective_tier: str = "", confirmed: bool = False,
+                  destructive: bool = False, estimated_rows: Optional[int] = None,
+                  affected_rows: Optional[int] = None, backup_table: str = "",
+                  rollback_sql: str = "", error: str = "",
+                  cost_ms: int = 0) -> int:
+        """写一条审计。调用方（接口层）在成功、拒绝、失败三条路都调它，
+        所以这里不再判空、只把长度截住：审计把库写坏是二次事故。
+        """
+        if status not in self.AUDIT_STATUSES:
+            raise ValueError(f"未知审计状态：{status}")
+        with self._engine.begin() as conn:
+            cur = conn.execute(text(
+                f"INSERT INTO sql_audit({_q('session_id')},{_q('ds_id')},"
+                f"{_q('ds_name')},{_q('target_db')},{_q('statement_kind')},"
+                f"{_q('sql')},{_q('requested_tier')},{_q('effective_tier')},"
+                f"{_q('confirmed')},{_q('destructive')},{_q('estimated_rows')},"
+                f"{_q('affected_rows')},{_q('backup_table')},{_q('rollback_sql')},"
+                f"{_q('status')},{_q('error')},{_q('cost_ms')},{_q('created_at')}) "
+                "VALUES(:sid,:ds,:dsn,:db,:kind,:sql,:rt,:et,:cf,:de,:est,:aff,"
+                ":bak,:rb,:st,:err,:ms,:now)"),
+                {"sid": (session_id or "")[:32], "ds": int(ds_id or 0),
+                 "dsn": (ds_name or "")[:128], "db": (target_db or "")[:128],
+                 "kind": (statement_kind or "")[:16], "sql": sql or "",
+                 "rt": (requested_tier or "")[:16], "et": (effective_tier or "")[:16],
+                 "cf": 1 if confirmed else 0, "de": 1 if destructive else 0,
+                 "est": None if estimated_rows is None else int(estimated_rows),
+                 "aff": None if affected_rows is None else int(affected_rows),
+                 "bak": (backup_table or "")[:64], "rb": rollback_sql or "",
+                 "st": status, "err": (error or "")[:2000],
+                 "ms": int(cost_ms or 0), "now": _now()})
+            return int(cur.lastrowid or 0)
+
+    def list_audits(self, *, limit: int = 50, ds_id: Optional[int] = None,
+                    session_id: Optional[str] = None,
+                    status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """最近 N 条，倒序。数据源多时按 ds_id/session_id 收窄。"""
+        cond, params = [], {"limit": max(1, min(int(limit or 50), 500))}
+        if ds_id is not None:
+            cond.append(f"{_q('ds_id')}=:ds")
+            params["ds"] = int(ds_id)
+        if session_id:
+            cond.append(f"{_q('session_id')}=:sid")
+            params["sid"] = session_id
+        if status:
+            cond.append(f"{_q('status')}=:st")
+            params["st"] = status
+        where = f"WHERE {' AND '.join(cond)}" if cond else ""
+        with self._engine.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT {self._AUDIT_COLS} FROM sql_audit {where} "
+                f"ORDER BY {_q('id')} DESC LIMIT :limit"), params).fetchall()
+        return [self._row_to_audit(r) for r in rows]
+
+    @staticmethod
+    def _row_to_audit(row: tuple) -> Dict[str, Any]:
+        return {"id": int(row[0]), "session_id": row[1] or "",
+                "ds_id": int(row[2] or 0), "ds_name": row[3] or "",
+                "target_db": row[4] or "", "statement_kind": row[5] or "",
+                "sql": row[6] or "", "requested_tier": row[7] or "",
+                "effective_tier": row[8] or "", "confirmed": bool(row[9]),
+                "destructive": bool(row[10]),
+                "estimated_rows": None if row[11] is None else int(row[11]),
+                "affected_rows": None if row[12] is None else int(row[12]),
+                "backup_table": row[13] or "", "rollback_sql": row[14] or "",
+                "status": row[15] or "executed", "error": row[16] or "",
+                "cost_ms": int(row[17] or 0), "created_at": _iso(row[18])}
 
     # ============================================================ 供应商
     _PROVIDER_COLS = ",".join(quote_ident(c) for c in (

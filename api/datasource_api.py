@@ -41,7 +41,7 @@ def create_datasource(body: DatasourceCreate, request: Request):
     ds = _store(request).create_datasource(
         name=body.name.strip(), type=body.type, host=body.host.strip(),
         port=body.port, user=body.user.strip(), password=body.password,
-        database=body.database.strip())
+        database=body.database.strip(), allowed_ops=body.allowed_ops)
     return _public(ds)
 
 
@@ -122,9 +122,15 @@ def get_datasource(ds_id: int, request: Request):
 @router.put("/{ds_id}", response_model=Datasource)
 def update_datasource(ds_id: int, body: DatasourceUpdate, request: Request):
     store = _store(request)
-    if not store.get_datasource(ds_id):
+    current = store.get_datasource(ds_id)
+    if not current:
         raise HTTPException(404, "数据源不存在")
     fields = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    # 文件源（上传的 CSV 落成的 SQLite）以 mode=ro 打开，物理上就写不了。
+    # 明确拒绝而不是静默忽略：静默会让人在界面上以为已经开了写权限。
+    if ((current.get("type") or "").lower() == "file"
+            and fields.get("allowed_ops") not in (None, "read")):
+        raise HTTPException(400, "文件数据源只读，不支持设为可写；要写数据请连 MySQL 库")
     ds = store.update_datasource(ds_id, **fields)
     _invalidate(ds_id)      # 连接参数可能改了（换库/换账号）→ 表清单缓存作废
     return _public(ds or {})

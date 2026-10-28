@@ -29,6 +29,14 @@ _IDENT_RE = re.compile(r"[A-Za-z0-9_$\u4e00-\u9fff]+")
 class FileAdapter(DataSourceAdapter):
     # SQLite 是单库：SQL 里只能写 `表名`，写 `库`.`表` 会被当成不存在的表
     qualifies_tables = False
+    # 连接以 mode=ro 打开，写操作到引擎层也是报错；这里显式声明并给出人话原因，
+    # 免得前端只看到一句 sqlite "readonly" 不知道发生了什么。
+    supports_write = False
+
+    def execute_write(self, sql: str, *, timeout: int = 10) -> Dict[str, Any]:
+        raise PermissionError(
+            "文件数据源（上传的 CSV/Excel）以只读方式打开，不支持写操作；"
+            "要改数据请连 MySQL 库并把该源标为可写")
 
     def __init__(self, file_path: str, db_name: str = "") -> None:
         p = Path(file_path or "")

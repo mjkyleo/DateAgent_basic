@@ -23,6 +23,9 @@ class Datasource(BaseModel):
     database: Optional[str] = None
     is_active: bool = False
     password_set: bool = False          # 响应用：是否已保存密码（不回显明文）
+    #: 该源允许的最高写档位（read/write_dml/write_ddl）。默认 read —— 数据源被标成
+    #: 可写是"人"的决定，Agent 不能自己抬这个上限。文件源永远停在 read。
+    allowed_ops: Literal["read", "write_dml", "write_ddl"] = "read"
     created_at: str = ""
 
 
@@ -34,6 +37,7 @@ class DatasourceCreate(BaseModel):
     user: str = ""
     password: str = ""
     database: str = ""
+    allowed_ops: Literal["read", "write_dml", "write_ddl"] = "read"
 
 
 class DatasourceUpdate(BaseModel):
@@ -43,6 +47,7 @@ class DatasourceUpdate(BaseModel):
     user: Optional[str] = None
     password: Optional[str] = None      # 传空串表示保持原密码
     database: Optional[str] = None
+    allowed_ops: Optional[Literal["read", "write_dml", "write_ddl"]] = None
 
 
 # ---------------------------------------------------------------- 6.2 会话状态
@@ -440,6 +445,81 @@ class TaskRunResult(BaseModel):
     skipped_count: int = 0
     failed_count: int = 0
     msg: str = ""
+
+
+# ---------------------------------------------------------------- 6.10 写操作
+# 写通道与只读通道分开：请求体里带的不是"要不要执行"，而是"人看没看清影响面"。
+# 所以 PrepareWriteResponse 必须把预估行数、备份表名、需要手输的确认词全部摊开，
+# ExecuteWriteRequest.confirmed 才由人勾选（缺省 False = 什么都不做）。
+class PrepareWriteRequest(BaseModel):
+    sql: str = Field(min_length=1)
+    ds_id: Optional[int] = None
+    db: str = ""                         # 目标库；缺省用数据源当前库
+    tier: Literal["read", "write_dml", "write_ddl"] = "read"
+    session_id: str = ""                 # 仅用于审计定位，不参与权限判定
+
+
+class ExecuteWriteRequest(PrepareWriteRequest):
+    confirmed: bool = False              # 人工确认位；未确认一律 409
+    confirm_phrase: str = ""             # 破坏性操作要求原样输入的表名
+
+
+class WritePlanResult(BaseModel):
+    """安检 + 影响面预估。passed=False 时 reason 说明拦在哪条规则，前端不做二次猜测。"""
+    passed: bool
+    reason: Optional[str] = None
+    statement_kind: str = "unknown"
+    statement_label: str = ""
+    targets: List[Dict[str, Any]] = Field(default_factory=list)
+    destructive: bool = False
+    confirm_phrase: str = ""
+    backup_table: Optional[str] = None
+    backup_sql: Optional[str] = None
+    estimate_sql: Optional[str] = None
+    needs_affected_rows: bool = False
+    final_sql: Optional[str] = None
+    estimated_rows: Optional[int] = None
+    requested_tier: str = "read"
+    effective_tier: str = "read"
+    max_allowed_rows: int = 0
+
+
+class WriteExecuteResult(BaseModel):
+    statement_kind: str
+    statement_label: str = ""
+    targets: List[Dict[str, Any]] = Field(default_factory=list)
+    destructive: bool = False
+    estimated_rows: Optional[int] = None
+    affected_rows: int = 0
+    cost_ms: int = 0
+    backup_table: Optional[str] = None
+    backup_rows: Optional[int] = None
+    rollback_sql: Optional[str] = None   # 只是给人看的指引，系统不代跑
+    final_sql: str = ""
+    effective_tier: str = "read"         # 实际执行时生效的档位（被源上限压过就与请求不同）
+    audit_id: int = 0
+
+
+class WriteAuditItem(BaseModel):
+    id: int
+    session_id: str = ""
+    ds_id: int = 0
+    ds_name: str = ""
+    target_db: str = ""
+    statement_kind: str = ""
+    sql: str = ""
+    requested_tier: str = ""
+    effective_tier: str = ""
+    confirmed: bool = False
+    destructive: bool = False
+    estimated_rows: Optional[int] = None
+    affected_rows: Optional[int] = None
+    backup_table: str = ""
+    rollback_sql: str = ""
+    status: str = "executed"
+    error: str = ""
+    cost_ms: int = 0
+    created_at: str = ""
 
 
 # ---------------------------------------------------------------- 通用响应

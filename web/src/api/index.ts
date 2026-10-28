@@ -8,7 +8,8 @@ import type {
   QueryResult, RemoteModelsResponse, RoundSummary, SampleResult,
   SourceInsightResult, SqlAdviceResult, SqlSecurityResult, SwitchResponse,
   TableSchema, TableStats, Task, TaskCreate, TaskRunResult, TaskUpdate,
-  TestConnectionResponse,
+  TestConnectionResponse, WriteAuditItem, WriteExecuteResult, WritePlan,
+  WriteRequestBody,
 } from './types'
 
 /* ---------------- 运维 ---------------- */
@@ -80,6 +81,19 @@ export const agentApi = {
                           refresh?: boolean; narrate?: boolean }) =>
     http.post<SourceInsightResult>('/api/agent/source_insight', body,
                                    { timeoutMs: body.narrate ? 300_000 : 60_000 }),
+}
+
+/* ---------------- 写通道（人工确认，总闸默认关） ---------------- */
+export const writeApi = {
+  /** 只出影响面预览，一个字节都不改；安检不过时后端返 403，正文就是拦人的那条规则 */
+  prepare: (body: WriteRequestBody) =>
+    http.post<WritePlan>('/api/agent/prepare_write', body),
+  /* 确认后落刀：备份整表/受影响行可能比重写还要慢，超时给到 3 分钟。
+     confirmed=false 后端返 409（不是 403）——双层确认不可绕过。 */
+  execute: (body: WriteRequestBody & { confirmed: boolean; confirm_phrase?: string }) =>
+    http.post<WriteExecuteResult>('/api/agent/execute_write', body, { timeoutMs: 180000 }),
+  audit: (params: { limit?: number; ds_id?: number | null; status?: string } = {}) =>
+    http.get<WriteAuditItem[]>(`/api/agent/write_audit${qs(params)}`),
 }
 
 /* ---------------- 轮次历史 ---------------- */

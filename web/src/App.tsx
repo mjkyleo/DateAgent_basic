@@ -15,6 +15,7 @@ import { DataSourcePanel } from './components/DataSourcePanel'
 import { SchemaPanel } from './components/SchemaPanel'
 import { ProviderPanel } from './components/ProviderPanel'
 import { TaskListPanel } from './components/tasks/TaskListPanel'
+import { WritePanel } from './components/write/WritePanel'
 import { Sheet } from './components/Sheet'
 
 const EXAMPLES = [
@@ -97,6 +98,11 @@ function Workbench() {
                      hint="把分析给出的建议收进来：可编辑、可调序、核对后统一执行"
                      onClose={app.closeDrawer}>
                 <TaskListPanel />
+              </Sheet>
+              <Sheet open={app.drawer === 'write'} title="写 SQL"
+                     hint="先预览影响面，勾了确认（删表还要手输表名）才落刀；总闸与数据源上限都得放开"
+                     onClose={app.closeDrawer}>
+                <WritePanel />
               </Sheet>
             </div>
           </div>

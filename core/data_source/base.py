@@ -71,6 +71,20 @@ class DataSourceAdapter(ABC):
                 raise ValueError(f"非法标识符: {n!r}")
         return f"`{db_name}`.`{table_name}`"
 
+    # -------------------------------------------------- 写通道（默认不支持）
+    #: 只有真正能落盘的来源才覆盖为 True；上层（QueryExecutor）写之前先看这个标志，
+    #: 不看的话文件源会把"物理只读"变成一条难懂的引擎报错。
+    supports_write = False
+
+    def execute_write(self, sql: str, *, timeout: int = 10) -> Dict[str, Any]:
+        """执行一条写语句（DML 或 DDL），返回 {affected_rows, cost_ms}。
+
+        默认实现直接拒绝：写能力必须被适配器**显式选择加入**，
+        以后新增数据源时忘记实现也不会退化成"悄悄能写"。
+        调用前提是已经过 security/write_security.py 的计划校验与人工确认。
+        """
+        raise PermissionError(f"{type(self).__name__} 不支持写操作")
+
     def close(self) -> None:  # 可选实现
         pass
 

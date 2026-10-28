@@ -113,6 +113,25 @@ class Settings:
             "load_extension", "read_csv", "read_parquet",  # 越出数据库边界
         }
 
+        # ---- 写操作（默认全关）----
+        # 生效权限 = 总闸 ∧ 数据源上限 ∧ 本次请求档位 ∧ 人工确认位，四层缺一不可。
+        # 总闸留在这里是为了「代码上了公开仓库也不等于线上能写」：想开写必须显式改环境变量，
+        # 光在前端点档位、光把数据源标成可写都不够。
+        self.allow_writes = _bool("AGENT_ALLOW_WRITES", False)
+        # 预估影响行数上限：超过就拒（不是"更安全"，是让人别在没看清影响面时点确认）
+        self.write_max_affected_rows = _int("WRITE_MAX_AFFECTED_ROWS", 5000)
+        # 写前自动备份受影响行到 <前缀>_<表>_<时间戳>；关掉它就等于删错了没法找回
+        self.write_auto_backup = _bool("WRITE_AUTO_BACKUP", True)
+        self.write_backup_prefix = (os.environ.get("WRITE_BACKUP_PREFIX") or "_bak").strip()
+        # 系统库 + 元数据库永远不可写：元数据库（默认 data_agent）和业务库常是同一台
+        # MySQL、同一个账号（凭据复用），不挡掉就等于允许 Agent 删自己的会话/任务表。
+        self.protected_databases = {
+            "information_schema", "mysql", "performance_schema", "sys",
+            (self.mysql_database or "").strip().lower(),
+        } - {""}
+        # 允许的写档位（有序，档位只能等于或低于数据源上限）：见 security/write_security.py
+        self.perm_tiers = ("read", "write_dml", "write_ddl")
+
     def llm_label(self) -> str:
         return self.llm_model if self.llm_enabled else "规则兜底（未配置 LLM）"
 

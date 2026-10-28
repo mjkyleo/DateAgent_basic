@@ -6,7 +6,8 @@ import { useApp } from '../state/AppProvider'
 import { errMessage, useAction } from '../hooks/useAsync'
 import { Chip } from './Primitives'
 import { ModelSwitcher } from './ModelSwitcher'
-import { ChecklistIcon, DatabaseIcon, TableIcon, UploadIcon } from './icons'
+import { TierSwitch } from './TierSwitch'
+import { ChecklistIcon, DatabaseIcon, PencilIcon, TableIcon, UploadIcon } from './icons'
 
 export function Composer() {
   const app = useApp()
@@ -63,7 +64,7 @@ export function Composer() {
           <div className="composer-entries">
             <button className={`btn-ghost btn-sm ${app.drawer === 'datasource' ? 'on' : ''}`}
                     onClick={() => app.openDrawer('datasource')}
-                    title="管理数据源：新增 MySQL 连接、切换激活、测试连接">
+                    title="管理数据源：新增 MySQL 连接、切换激活、测试连接、标记可写档位">
               <DatabaseIcon />数据源
             </button>
             <button className={`btn-ghost btn-sm ${app.drawer === 'schema' ? 'on' : ''}`}
@@ -83,6 +84,13 @@ export function Composer() {
               {pending > 0 && <span className="entry-badge">{pending}</span>}
             </button>
             <ModelSwitcher />
+            <TierSwitch />
+            <button className={`btn-ghost btn-sm ${app.drawer === 'write' ? 'on' : ''}`}
+                    onClick={() => app.openDrawer('write')}
+                    title="写 SQL：先预览影响面，勾了确认（破坏性操作还要手输表名）才真的落刀">
+              <PencilIcon />写 SQL
+              {app.writeEffective !== 'read' && <span className="entry-badge">写</span>}
+            </button>
             <input ref={fileRef} type="file" hidden accept=".csv,.tsv,.txt,.json,.xlsx"
                    onChange={(e) => void onFile(e)} />
           </div>

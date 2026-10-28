@@ -51,6 +51,7 @@ class LocalStore:
                 user TEXT DEFAULT '', password TEXT DEFAULT '',
                 database TEXT DEFAULT '',
                 file_path TEXT DEFAULT '',
+                allowed_ops TEXT NOT NULL DEFAULT 'read',
                 is_active INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
@@ -79,7 +80,10 @@ class LocalStore:
             # 旧库升级：SQLite 无 IF NOT EXISTS 语法的 ADD COLUMN，按列探测后补
             for table, col, ddl in (("sessions", "intent", "TEXT DEFAULT ''"),
                                     ("sessions", "target_db", "TEXT DEFAULT ''"),
-                                    ("datasources", "file_path", "TEXT DEFAULT ''")):
+                                    ("datasources", "file_path", "TEXT DEFAULT ''"),
+                                    # 写权限上限：老库默认只读，绝不因为升级就突然能删表
+                                    ("datasources", "allowed_ops",
+                                     "TEXT NOT NULL DEFAULT 'read'")):
                 if col not in self._columns_of(table):
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
             self._probe_json1()
@@ -103,15 +107,18 @@ class LocalStore:
     # ------------------------------------------------------------ 数据源
     def create_datasource(self, *, name: str, type: str = "mysql", host: str = "",
                           port: int = 3306, user: str = "", password: str = "",
-                          database: str = "", file_path: str = "") -> Dict[str, Any]:
+                          database: str = "", file_path: str = "",
+                          allowed_ops: str = "read") -> Dict[str, Any]:
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "INSERT INTO datasources(name,type,host,port,user,password,database,"
-                "file_path,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (name, type, host, port, user, password, database, file_path, _now()))
+                "file_path,allowed_ops,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (name, type, host, port, user, password, database, file_path,
+                 allowed_ops or "read", _now()))
             return self.get_datasource(int(cur.lastrowid or 0)) or {}
 
-    _DS_COLS = ("id,name,type,host,port,user,password,database,file_path,is_active,created_at")
+    _DS_COLS = ("id,name,type,host,port,user,password,database,file_path,"
+                "allowed_ops,is_active,created_at")
 
     def get_datasource(self, ds_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -126,7 +133,8 @@ class LocalStore:
         return [self._row_to_ds(r) for r in rows]
 
     def update_datasource(self, ds_id: int, **fields: Any) -> Optional[Dict[str, Any]]:
-        allowed = ("name", "host", "port", "user", "password", "database", "file_path")
+        allowed = ("name", "host", "port", "user", "password", "database", "file_path",
+                   "allowed_ops")
         sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
         # 约定：password 传空串 = 保持原密码（前端编辑表单未改密码时传空）
         if "password" in sets and sets["password"] == "":
@@ -171,7 +179,8 @@ class LocalStore:
         return {"id": row[0], "name": row[1], "type": row[2], "host": row[3],
                 "port": row[4], "user": row[5], "password": row[6],
                 "database": row[7], "file_path": row[8] or "",
-                "is_active": bool(row[9]), "created_at": row[10]}
+                "allowed_ops": row[9] or "read",
+                "is_active": bool(row[10]), "created_at": row[11]}
 
     # ------------------------------------------------------------ 会话
     def create_session(self, *, ds_id: int, user_question: str,

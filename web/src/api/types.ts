@@ -14,6 +14,8 @@ export interface Datasource {
   database: string | null
   is_active: boolean
   password_set: boolean
+  /** 该源允许的最高写档位；后端默认 read，文件源恒为 read（SQLite 以 mode=ro 打开） */
+  allowed_ops: PermTier
   created_at: string
 }
 
@@ -25,6 +27,7 @@ export interface DatasourceCreate {
   user?: string
   password?: string
   database?: string
+  allowed_ops?: PermTier
 }
 
 export interface DatasourceUpdate {
@@ -34,6 +37,7 @@ export interface DatasourceUpdate {
   user?: string
   password?: string   // 传空串表示保持原密码
   database?: string
+  allowed_ops?: PermTier
 }
 
 /* ---------------- 6.2 会话状态 ---------------- */
@@ -191,6 +195,83 @@ export interface TaskRunResult {
   msg: string
 }
 
+/* ---------------- 写通道（后端 pydantic_schemas 6.10） ---------------- */
+/** 权限档位：只读 < 写数据(DML) < 改结构(DDL)。请求档位只能等于或低于数据源上限。 */
+export type PermTier = 'read' | 'write_dml' | 'write_ddl'
+
+export interface WritePlanTarget {
+  database: string
+  table: string
+  is_main: boolean
+}
+
+/** /prepare_write 的出参：passed=false 时 reason 就是拦人的那条规则，前端不二次猜测 */
+export interface WritePlan {
+  passed: boolean
+  reason: string | null
+  statement_kind: string
+  statement_label: string
+  targets: WritePlanTarget[]
+  destructive: boolean
+  confirm_phrase: string
+  backup_table: string | null
+  backup_sql: string | null
+  estimate_sql: string | null
+  needs_affected_rows: boolean
+  final_sql: string | null
+  estimated_rows: number | null
+  requested_tier: PermTier
+  effective_tier: PermTier
+  max_allowed_rows: number
+}
+
+export interface WriteExecuteResult {
+  statement_kind: string
+  statement_label: string
+  targets: WritePlanTarget[]
+  destructive: boolean
+  estimated_rows: number | null
+  affected_rows: number
+  cost_ms: number
+  backup_table: string | null
+  backup_rows: number | null
+  rollback_sql: string | null
+  final_sql: string
+  /** 实际执行时生效的档位（被数据源上限压过就与请求档位不同） */
+  effective_tier: PermTier
+  audit_id: number
+}
+
+export interface WriteAuditItem {
+  id: number
+  session_id: string
+  ds_id: number
+  ds_name: string
+  target_db: string
+  statement_kind: string
+  sql: string
+  requested_tier: string
+  effective_tier: string
+  confirmed: boolean
+  destructive: boolean
+  estimated_rows: number | null
+  affected_rows: number | null
+  backup_table: string
+  rollback_sql: string
+  status: 'executed' | 'rejected' | 'failed' | string
+  error: string
+  cost_ms: number
+  created_at: string
+}
+
+export interface WriteRequestBody {
+  sql: string
+  ds_id?: number | null
+  db: string
+  tier: PermTier
+  session_id?: string
+}
+
 /* ---------------- 6.8 优化建议 ---------------- */
 export type Severity = 'high' | 'medium' | 'low' | 'info'
 
@@ -338,7 +419,15 @@ export interface SampleResult {
 export interface OkResponse { success: boolean; msg: string }
 export interface TestConnectionResponse { connected: boolean; msg: string }
 export interface SwitchResponse { success: boolean; ds_id: number; msg: string }
-export interface HealthResponse { status: string; llm: string; store: string }
+export interface HealthResponse {
+  status: string
+  llm: string
+  store: string
+  /** 写总闸（AGENT_ALLOW_WRITES）：false 时任何写语句都被拒，档位选到多高都没用 */
+  writes_enabled: boolean
+  /** 单次写入允许的影响行数上限（WRITE_MAX_AFFECTED_ROWS） */
+  write_max_affected_rows: number
+}
 
 /* ---------------- 请求体 ---------------- */
 export interface ParseIntentBody {

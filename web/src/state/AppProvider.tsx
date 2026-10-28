@@ -6,9 +6,11 @@ import {
 } from 'react'
 import { datasourceApi, opsApi, projectsApi, providersApi, roundsApi, tasksApi } from '../api'
 import type {
-  Datasource, Project, Provider, ProviderModelItem, RoundSummary, Task, TaskCreate,
+  Datasource, HealthResponse, PermTier, Project, Provider, ProviderModelItem,
+  RoundSummary, Task, TaskCreate,
 } from '../api/types'
 import { useAsync, useAction } from '../hooks/useAsync'
+import { effectiveTier, sourceCeiling } from '../lib/writeGate'
 
 export interface Selection {
   db: string
@@ -16,12 +18,27 @@ export interface Selection {
   fields: string[]
 }
 
-export type DrawerKind = 'datasource' | 'schema' | 'providers' | 'projects' | 'tasks' | null
+export type DrawerKind = 'datasource' | 'schema' | 'providers' | 'projects' | 'tasks' | 'write' | null
+
+/** 提问侧的写档位：只在本地记住，每次请求都当作"人自己选的"发给后端，
+    后端再按数据源上限压一次 —— 界面不能替后端抬上限。 */
+const TIER_KEY = 'dd.writeTier'
+
+function readTier(raw: string | null): PermTier {
+  return raw === 'write_dml' || raw === 'write_ddl' ? raw : 'read'
+}
 
 interface AppValue {
-  health: ReturnType<typeof useAsync<{ status: string; llm: string; store: string }>>
+  health: ReturnType<typeof useAsync<HealthResponse>>
   datasources: ReturnType<typeof useAsync<Datasource[]>>
   activeDs: Datasource | null
+  /** 写档位（提问区左下角那个开关）与它在本数据源上的实际生效值 */
+  writeTier: PermTier
+  setWriteTier: (t: PermTier) => void
+  writeCeiling: PermTier
+  writeEffective: PermTier
+  /** 数据源可写标记（allowed_ops）：人给的源上限，文件源后端会直接拒 */
+  markDsOps: (id: number, ops: PermTier) => Promise<void>
   /** 供应商接入清单与当前使用的模型（后端 MySQL 元数据库；不可用时为空列表） */
   providers: ReturnType<typeof useAsync<Provider[]>>
   activeProvider: Provider | null
@@ -88,6 +105,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => datasources.data?.find((d) => d.is_active) ?? null,
     [datasources.data],
   )
+
+  /* 写档位本地记住：切数据源不重置（人常常在几个源之间来回切）。
+     发给后端的是这份"人自己选的"，后端再按源上限压一次；这里算的生效值只用于界面提示。 */
+  const [writeTier, setWriteTierState] = useState<PermTier>(
+    () => readTier(localStorage.getItem(TIER_KEY)))
+  const setWriteTier = useCallback((t: PermTier) => {
+    setWriteTierState(t)
+    if (t === 'read') localStorage.removeItem(TIER_KEY)
+    else localStorage.setItem(TIER_KEY, t)
+  }, [])
+  const writeCeiling = useMemo(() => sourceCeiling(activeDs), [activeDs])
+  /* 生效值要把总闸算进去：总闸关着时按钮必须显示只读，
+     否则界面承诺了一个后端不会兑现的档位。 */
+  const writesEnabled = health.data?.writes_enabled ?? null
+  const writeEffective = useMemo(
+    () => effectiveTier(writeTier, writeCeiling, writesEnabled),
+    [writeTier, writeCeiling, writesEnabled])
+
+  const markDsOps = useCallback(async (id: number, ops: PermTier) => {
+    await datasourceApi.update(id, { allowed_ops: ops })
+    datasources.reload()
+  }, [datasources])
   /* 当前模型 = 唯一 is_active 的那个（后端保证全局唯一），所属供应商即 activeProvider */
   const activePick = useMemo(() => {
     for (const p of providers.data ?? []) {
@@ -139,6 +178,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value: AppValue = {
     health, datasources, activeDs,
+    writeTier, setWriteTier, writeCeiling, writeEffective, markDsOps,
     providers, activeProvider, activeModel,
     projects, projectId, setProjectId,
     rounds, refreshRounds,

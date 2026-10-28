@@ -1,14 +1,22 @@
 # 问数 · 数据分析 Agent —— 前端
 
 只读、双层人工确认的数据分析 Agent 前端。后端为 `basic/`（FastAPI，默认 8001）。
+另有一条**写通道**（人手工写 SQL，先预览影响面再确认执行），权限口径见下文「写通道界面」
+与后端 README 的「写能力」——界面上显示的永远是**生效档位**，不是请求档位。
 
 ## 启动
 
 ```bash
 npm install
 npm run dev        # http://127.0.0.1:5174，/api 已代理到 8001
-npm run build      # tsc --noEmit + vite build
+npm run build      # tsc --noEmit && vite build
+npm run typecheck  # 只做类型检查
+npm test           # node --test（14 项，钉 src/lib/writeGate.ts 的写权限纯逻辑）
 ```
+
+`npm test` 用 Node 24 自带的 `node --test` + 类型擦除，不引测试框架；因此被测文件里的
+相对导入**必须带 `.ts` 后缀**（`tsconfig.json` 开了 `allowImportingTsExtensions`），
+否则 Node 解析不到模块。
 
 后端需先启动（仓库根 `data-agent-lite/`）：
 
@@ -19,25 +27,30 @@ python -m uvicorn basic.main:app --port 8001
 ## 目录
 
 ```
+tests/        writeGate.test.mjs（node --test：写权限纯逻辑 14 项）
 src/
-  api/          types.ts（与后端 Pydantic 模型 1:1）· http.ts（fetch 封装/ApiError）· index.ts（接口清单）
-  lib/          sqlFormat.ts（SQL 子句级排版）
+  api/          types.ts（与后端 Pydantic 模型 1:1，含 WritePlan/WriteExecuteResult/WriteAuditItem）
+                · http.ts（fetch 封装/ApiError）· index.ts（接口清单，含 writeApi）
+  lib/          sqlFormat.ts（SQL 子句级排版）· writeGate.ts（写权限纯逻辑，不碰 React）
   hooks/        useAsync（请求三态）· useSchema（库表懒加载）
-  state/        AppProvider（数据源/历史/模型/UI 开关）
+  state/        AppProvider（数据源/历史/模型/UI 开关/写档位）
   session/      machine.ts（五阶段状态机）· RoundProvider（阶段编排）
   components/
     stages/     StagePanel（单阶段聚焦）· StageBodies（各阶段产出与编辑区）
     advisor/    SourceInsightPanel（阶段①数据源洞察）· SqlAdvicePanel（阶段③SQL 建议）· AdviceItem
     tasks/      TaskListPanel（任务清单抽屉：编辑 / ↑↓ 调序 / 核对后批量执行）
+    write/      WritePanel（写 SQL 抽屉：预览影响面 → 勾选确认 / 手输表名 → 执行 + 写入记录）
     StageNavigator.tsx（右侧悬浮阶段导航）
+    TierSwitch.tsx（提问区权限档位开关：只读 / 读写数据 / 结构变更）
     CodeBlock.tsx（SqlBlock 排版展示 / SqlEditor 编辑）
     DataTable.tsx（高密度表格：数值列 mono 右对齐 / 状态列彩色徽章）
     ResultView.tsx（KPI + 摘要 + 图表 + 明细 + 洞察 + SQL 溯源）
-    HistoryList.tsx（项目分组 + 重命名/移动/删除）
+    HistoryList.tsx（项目分组 + 重命名/移动/删除 · formatTime）
     ProviderPanel.tsx（供应商模板标签 + 表单 + 已接入列表）
     ConfirmDialog.tsx（通用确认模态框）
     其余：图表 / 数据源 / 库表 / 回看 / 输入区 / 顶栏 / 弹层
   styles/       tokens（设计变量）· base（重置+动效）· layout（骨架）· components（组件）
+                · tasks（任务清单）· write（档位开关 / 数据源写上限 / 写入面板与审计）
 ```
 
 ## 设计语言：Data Dense（数据密集）
@@ -141,6 +154,34 @@ ID 列与数值列按列名区分：ID 左对齐等宽（标识符不是度量�
 - 已接入列表支持：启用/禁用（禁用后不参与模型解析）、测试、编辑模型清单、
   点模型 chip 切换为当前使用、删除（确认模态框）。
 
+### 写通道界面（档位开关 + 写 SQL 抽屉）
+
+写语句由**人自己写**（这一版不让 LLM 生成写语句），界面只负责把后端那四层约束
+（总闸 `AGENT_ALLOW_WRITES` ∧ 数据源上限 `allowed_ops` ∧ 本次档位 ∧ 人工确认）
+**在点下去之前就说清楚**。
+
+- `lib/writeGate.ts`：全部判定都是纯函数（档位比较、四层提示、确认就绪、预览是否过期、
+  备份表名"形如"、审计三态口径），不碰 React、不发请求，所以能用 `node --test` 直接钉住。
+- `components/TierSwitch.tsx`：提问区的「权限」开关。按钮上显示的是**生效档位**：
+  总闸关着 → 显示「只读」、高档位禁选并写明是哪个环境变量；高于数据源上限 → 同样禁选。
+  档位记在 `localStorage`（`dd.writeTier`），切数据源不重置。
+- `components/DataSourcePanel.tsx`：每个 MySQL 源一个「写权限上限」下拉（源级上限优先于聊天框的档位）；
+  文件源不给下拉，只写一句"文件源只读（SQLite 以 `mode=ro` 打开）"。
+- `components/write/WritePanel.tsx`：`预览影响面` → 计划卡（目标库 / 涉及表 / 预估行数 vs 单次上限 /
+  备份表**形如** `_bak_表_…` / 生效档位）→ 勾选「我已看清影响面」→ 破坏性语句**原样输入表名** → `确认执行`。
+  结果卡给审计号、影响行数、备份表名、回滚指引（**只是给人看的 SQL，系统不代跑**）。
+  「写入记录」列最近 50 条本源审计，三态分色，被拒的预览也在里面。
+
+三条不能省的规矩：
+
+1. **没有预览就没有确认按钮** —— 影响多少行、备份到哪，必须先摊开；
+2. **预览之后改了 SQL / 目标库 / 档位，那份预览立刻作废**（后端执行前还会重估一次，
+   这条不是安全边界，只是别让界面拿着旧数字说"预计影响 N 行"）；
+3. **按钮灰着的时候，旁边必须写清原因**（`.wp-blockers`）—— 只置灰不解释，人只会以为功能坏了。
+
+反向验证：`python -m basic.scripts.mutation_check_writegate`（仓库根执行）会把 `writeGate.ts`
+的 12 条关键判定逐条改坏，每条都必须让测试变红，最后原样还原再跑一次确认全绿。
+
 ## 会话存储与模型接入
 
 - **项目、会话、供应商、模型清单都存 MySQL**（`storage/mysql_store.py`，库名 `data_agent`，
@@ -203,8 +244,9 @@ ID 列与数值列按列名区分：ID 左对齐等宽（标识符不是度量�
 - **右栏 + 右侧悬浮导航**：五个阶段节点常驻页面右上，浮于对话之上、可一键收起为圆点条；
   点击节点切换聚焦，主区一次只展开一个阶段，其余收起为可切换列表项，
   阶段卡片内含过程消息、产出与编辑区、退回与重跑操作。
-- **底部输入区**：提问框 + 数据源 / 库表结构 / 任务清单 / 模型供应商弹出面板 + 文件导入。
-  任务清单入口带未完成条数角标，清单为空时不显示。
+- **底部输入区**：提问框 + 数据源 / 库表结构 / 任务清单 / 模型供应商 / 写 SQL 弹出面板 + 文件导入
+  + 「权限」档位开关（显示生效档位）+「模型」切换。
+  任务清单入口带未完成条数角标，清单为空时不显示；「写 SQL」在生效档位不是只读时带一个「写」角标。
 
 ## 约定
 

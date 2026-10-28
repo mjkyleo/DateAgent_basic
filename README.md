@@ -1,7 +1,9 @@
 # 数据分析Agent MVP（basic/）
 
 按《[数据分析Agent MVP 设计文档](数据分析Agent%20MVP%20设计文档.md)》V1.0 实现的最小可用端到端数据分析 Agent。
-**MySQL only · 只读 · 双层人工确认 · 每步可解释**——系统默认不会自动执行任何数据库操作。
+**默认只读 · 双层人工确认 · 每步可解释**——系统默认不会自动执行任何数据库操作。
+写能力（CREATE/INSERT/UPDATE/DELETE/DROP）是独立通道，需要环境变量总闸 + 数据源显式标可写
++ 人工确认才会落刀，默认全关（见下文「写能力」）。
 
 > 本目录是与仓库根「完整版 da-lite」**并列的一套独立实现**：根版是 LangGraph + DuckDB 的完整方案
 > （见根 `README.md`），本 MVP 刻意不依赖那些重型包，单独跑、单独测。
@@ -28,11 +30,17 @@ basic\scripts\start_all.bat    rem 选 Python → 起后端/前端 → 轮询 /h
 basic\scripts\stop_all.bat     rem 按端口 8001/5174 杀进程树 + 起脚本开的标题窗口
 ```
 
-测试：`cd basic && python -m pytest tests -q`（147 项：安全门/统计洞察/存储适配器/错误脱敏/轮次持久化/
+测试：`cd basic && python -m pytest tests -q`（234 项：安全门/统计洞察/存储适配器/错误脱敏/轮次持久化/
 文件导入/适配器生命周期/双层确认落库/加固回归/运行时修复回归（事件循环/双份初始化/降级绑定/级联清理/
 元数据库凭据复用/降级 503）/内容画像事实层（脱敏、预算、降级、缓存、phenomena、叙述超时下限）/供应商模型清单拉取/
 任务清单（CRUD、调序、批量执行的混合语义、确认门、只读安全门不可绕过、账号脱敏）/
+写安检（四层权限、作用域、系统库与元数据库、WHERE、JOIN、导出与函数黑名单、备份与确认词）/
+写执行与审计（预估→备份→落刀的顺序、备份失败中止、上限按执行时重估、文件源拒写、三态审计、
+预览被拒也落审计、审计存储缺失时预览仍 403、生效档位入审计）/
 文件源端到端/备用模型切换矩阵）。
+
+前端测试：`cd basic/web && npm test`（14 项，Node 24 自带 `node --test` + 类型擦除，不引测试框架；
+钉的是 `src/lib/writeGate.ts` 的写权限纯逻辑 —— 界面显示的是**生效档位**，按钮说谎和后端漏拦一样致命）。
 
 依赖：`pip install -r basic/requirements.txt`。
 
@@ -40,7 +48,9 @@ basic\scripts\stop_all.bat     rem 按端口 8001/5174 杀进程树 + 起脚本�
 
 ```bash
 python -m basic.scripts.migrate_sessions_to_mysql [--dry-run]   # SQLite 历史会话 → MySQL 元数据库（幂等）
-python -m basic.scripts.verify_new_features                     # 新增能力自检（41 项断言，需真实 MySQL）
+python -m basic.scripts.verify_new_features                     # 新增能力自检（56 项断言，需真实 MySQL）
+python -m basic.scripts.mutation_check_writegate                # 反向验证：把前端写权限判定逐条改坏，确认测试真会红（12 条）
+python -m basic.scripts.write_ui_sandbox up|down                # 写通道实跑用的隔离沙箱库（建/清，凭据不出进程）
 ```
 
 ## 数据入口（提问框左下角）
@@ -48,6 +58,8 @@ python -m basic.scripts.verify_new_features                     # 新增能力�
 全部"数据进来"的操作集中在提问框左下角：
 
 - **数据源**：新增 MySQL 连接（建议仅 SELECT 权限账号）、测试连通、切换激活、删除；
+  每个源另有写上限 `allowed_ops`（`read` 默认 / `write_dml` / `write_ddl`，见「写能力」），
+  文件源恒为只读、标可写直接 400；
 - **库表结构**：浏览库 → 表 → 字段，勾选后作为提问上下文；
 - **导入文件**：上传 CSV / TSV / TXT / JSON / XLSX（≤20MB、≤20 万行、≤100 列），
   解析成一张 SQLite 表并**自动激活**，上传完直接提问。列名保留原文（含中文），
@@ -200,6 +212,7 @@ python -c "from basic.config.settings import settings as s; from basic.core.llm 
 | 模型供应商 | **MySQL** | 库 `data_agent.llm_providers` |
 | 供应商下的模型清单 | **MySQL** | 库 `data_agent.llm_provider_models` |
 | 任务清单（建议转成的待办） | **MySQL** | 库 `data_agent.project_tasks` |
+| 写操作审计（含被拒的尝试） | **MySQL** | 库 `data_agent.sql_audit` |
 
 - 元数据库连接：`AGENT_MYSQL_HOST/PORT/USER/PASSWORD/DATABASE`（默认库名 `data_agent`）；
   **未配密码时复用当前激活 MySQL 数据源的凭据**（同一台服务器通常是同一套账号）。
@@ -257,6 +270,75 @@ python -c "from basic.config.settings import settings as s; from basic.core.llm 
   列级聚合另有 `META_CACHE_TTL_S`（默认 30s）的短缓存。整条链路的时间几乎都花在 LLM 上：
   实测 kaggle_demo（5 表 4.7 万行）画像 1.8s（命中缓存 0.02s），LLM 叙述 122.7s。
 
+## 写能力（CREATE / INSERT / UPDATE / DELETE / DROP，默认全关）
+
+只读通道解决"看得懂数据"，写通道解决"改得动数据"。它不是把安全门打开一个口子，
+而是另一条独立通道：**四层缺一不可**，任何一层没对上就拒，且拒得看得懂。
+
+```
+总闸 AGENT_ALLOW_WRITES  ∧  数据源上限 datasources.allowed_ops
+  ∧  本次请求档位 tier（只能等于或低于源上限）  ∧  人工确认 confirmed / 确认词
+```
+
+| 档位 | 放行 | 说明 |
+|---|---|---|
+| `read` | 只读 | 数据源默认值；也是总闸关闭时所有源的强制档位 |
+| `write_dml` | INSERT / UPDATE / DELETE | |
+| `write_ddl` | 以上 + CREATE / ALTER / DROP / TRUNCATE | 破坏性语句需**原样输入表名** |
+
+| 接口 | 用途 |
+|---|---|
+| `POST /api/agent/prepare_write` | 只出影响面预览：语句类型、目标表、预估行数、备份表名、需要手输的确认词。一个字节都不改 |
+| `POST /api/agent/execute_write` | `{sql, db, tier, confirmed, confirm_phrase?}` 确认后执行；未确认 409、被安检/权限拒 403、引擎失败 500、审计存储不可用 503 |
+| `GET /api/agent/write_audit` | 审计列表（可按 `ds_id`/`session_id`/`status` 过滤，新→旧） |
+| `PUT /api/datasource/{id}` | 设 `allowed_ops`（文件数据源标可写直接 400：SQLite 以 `mode=ro` 打开，从适配器层就拒绝写） |
+
+写通道硬编码的边界（**不随档位放开，也不由环境变量决定**）：
+
+- **单语句**：`;` 拼多条永远拒；
+- **作用域**：只允许写当前选中的库，`UPDATE other_db.t` 与跨库子查询一律拒；
+- **系统库与元数据库**：`information_schema` / `mysql` / `performance_schema` / `sys`
+  以及本项目元数据库（默认 `data_agent`）禁写 —— 业务库和元数据库常是同一台 MySQL、
+  同一个账号（凭据复用），不挡掉就等于允许 Agent 删自己的会话表/任务表；
+- **UPDATE/DELETE 必须带 WHERE**：想清空请显式用 TRUNCATE（走 `write_ddl` + 输入表名）；
+- **多表 JOIN 的 UPDATE/DELETE 不支持**（P0）：备份与行数预估只在单表上准确；
+- **`INTO OUTFILE` / `INTO DUMPFILE` 与函数黑名单**（`load_file`/`sleep`/`benchmark` 等）照拦 ——
+  写语句的子查询同样是读服务器的口子；
+- **影响行数上限** `WRITE_MAX_AFFECTED_ROWS`（默认 5000）：执行时**重新估一次**，
+  不拿预览时的旧数字放行；预估失败 = 拒（影响面是确认的唯一依据，拿不到数等于让人盲签）。
+
+执行顺序是硬约束：**判档位 → 估影响 → 备份 → 落刀**。
+`WRITE_AUTO_BACKUP=true`（默认）时 UPDATE/DELETE 把受影响行、DROP/TRUNCATE/删列把整表
+备份到 `_bak_<表名>_<UTC秒>_<6位随机>`，备份建表失败就中止，绝不"先删了再说"。
+随机后缀不是讲究好看：同一张表连着改两次会落在同一秒，纯秒级时间戳会撞名
+（第 2 条 `CREATE TABLE` 直接报已存在 —— 真 MySQL 实跑撞出来的）。
+
+**回滚是给人看的 SQL 文本，系统不代跑**：UPDATE 还原要求表有主键、DROP 还原要重建结构，
+把这些交给自动执行等于再造一个更危险的写通道。响应里的 `rollback_sql` 供人工比对执行。
+
+审计落在 `data_agent.sql_audit`：`executed` / `rejected` / `failed` 三态全记，
+被拒也记 —— 有人反复拿越权档位试探时，只有 `rejected` 行看得出来。
+**预览阶段被拒也落一条 `rejected`**：越权试探多半止步于预览，只记执行阶段等于把试探从审计里抹掉；
+预览一个字节都不改，所以审计存储不可用时它只记日志、仍返 403（真要写的时候 `execute_write` 才硬要求审计存储）。
+元数据库降级为本地 SQLite 时写接口直接 503：改完数据查不到是谁改的，比不改更危险。
+
+### 聊天侧怎么用
+
+写语句由**人自己写**（P1 不让 LLM 生成写语句），入口都在提问区：
+
+- **「权限」开关**：选本次档位（只读 / 读写数据 / 结构变更）。开关上显示的是**生效值**，
+  不是请求值 —— 总闸关着时它直接显示「只读」、高档位禁选并写明是哪个环境变量；
+  高于数据源上限的档位也禁选。档位记在 `localStorage`，切数据源不重置。
+- **「数据源」面板**：给每个 MySQL 源标写上限（`allowed_ops`）；文件源恒只读，标可写后端返 400。
+- **「写 SQL」抽屉**：`预览影响面` → 计划卡（目标库、涉及表、预估行数 vs 单次上限、备份表**形如**
+  `_bak_表_…`、生效档位）→ 勾选「我已看清影响面」→ 破坏性语句还要**原样输入表名** → `确认执行`。
+  预览之后改了 SQL / 目标库 / 档位，那份预览立刻作废，按钮回到灰的并写明原因；
+  执行结果给审计号、影响行数、备份表名与回滚指引（**不代跑**）。
+- **「写入记录」**：最近 50 条本源审计，三态分色；`档位 请求 → 生效` 只在两者不同时才显示箭头。
+
+`/healthz` 为此多返回两个字段：`writes_enabled`（总闸开没开）与 `write_max_affected_rows`（单次行数上限）。
+这两条只由环境变量决定，界面若不报，人只能点了预览才知道被拦。
+
 ## 端到端链路
 
 ```
@@ -288,6 +370,7 @@ basic/
 │   ├── agent_api.py            # 五步链路 + 会话/重命名/移动 + source_insight + sql_advice
 │   ├── project_api.py          # 项目（会话分组，每个项目一个本地文件夹）
 │   ├── task_api.py             # 任务清单：CRUD / 调序 / 批量执行（确认门 + 只读安全门）
+│   ├── write_api.py            # 写通道：影响面预览 / 确认后执行 / 审计查询
 │   └── provider_api.py         # 模型供应商接入（草稿测试/启用禁用/模型清单/激活）
 ├── core/
 │   ├── data_source/            # DataSourceAdapter 抽象 + MySQL + SQLite 文件实现
@@ -297,28 +380,35 @@ basic/
 │   ├── sql_advisor.py          # SQL 优化规则引擎（AST + 元数据，附依据）
 │   ├── source_insight.py       # 数据源系统性描述（规则 + LLM 叙述）
 │   ├── sql_generator.py        # SQL 校验 + Schema 约束
-│   ├── query_executor.py       # 只读执行沙箱：二次校验/超时/脱敏
+│   ├── query_executor.py       # 两条通道：只读（二次校验/超时/脱敏）+ 写入（档位→预估→备份→落刀）
 │   ├── stats_analyzer.py       # 纯 Python 统计
 │   ├── insight_engine.py       # 规则洞察：异常/趋势/对比，附依据
 │   └── viz_recommender.py      # 图表推荐 + ECharts option
-├── security/sql_security.py    # AST 安全门：SELECT-only/单语句/禁写/LIMIT
+├── security/
+│   ├── sql_security.py         # AST 安全门：SELECT-only/单语句/禁写/LIMIT（只读通道）
+│   └── write_security.py       # 写安检：档位/作用域/系统库/WHERE/多表/黑名单 → 执行计划
 ├── storage/
-│   ├── local_store.py          # SQLite：数据源配置
-│   └── mysql_store.py          # MySQL：项目 + 会话 + 供应商 + 模型 + 任务清单（含建库建表与老库迁移）
-├── scripts/                    # migrate_sessions_to_mysql / verify_new_features
+│   ├── local_store.py          # SQLite：数据源配置（含每源写上限 allowed_ops）
+│   └── mysql_store.py          # MySQL：项目 + 会话 + 供应商 + 模型 + 任务清单 + 写审计（含建库建表与老库迁移）
+├── scripts/                    # migrate_sessions_to_mysql / verify_new_features /
+│                               # mutation_check_writegate（前端写权限反向验证）/ write_ui_sandbox（写通道实跑沙箱）
+├── tests/                      # pytest 234 项（安全门/写安检/写执行与审计/任务清单/洞察…）
 ├── utils/                      # helpers（脱敏/类型推断）/ logging / cache
-└── web/                        # React 19 + Vite + TS + ECharts 工作台
+└── web/                        # React 18 + Vite 5 + TS 5.6 + ECharts 工作台
+    ├── tests/                  # node --test 14 项（写权限纯逻辑，不引测试框架）
     └── src/
-        ├── api/                # 接口清单 + 与后端 1:1 的类型
-        ├── lib/                # sqlFormat（SQL 子句级排版）
+        ├── api/                # 接口清单 + 与后端 1:1 的类型（含写通道 WritePlan/WriteExecuteResult）
+        ├── lib/                # sqlFormat（SQL 子句级排版）/ writeGate（写权限纯逻辑：档位·四层提示·确认就绪）
         ├── session/            # machine.ts（五阶段状态机）+ RoundProvider（阶段编排）
-        ├── state/              # AppProvider（数据源/历史/模型/UI 开关）
+        ├── state/              # AppProvider（数据源/历史/模型/UI 开关/写档位）
         ├── hooks/              # useAsync / useSchema
         ├── components/
         │   ├── stages/         # StagePanel（单阶段聚焦）+ StageBodies（各阶段产出与编辑）
         │   ├── advisor/        # SourceInsightPanel / SqlAdvicePanel / AdviceItem
-        │   └── 其余：结果/表格/图表/数据源/库表/模型/历史/回看/确认框
-        └── styles/             # tokens · base · layout · components（四层）
+        │   ├── tasks/          # 任务清单抽屉
+        │   ├── write/          # WritePanel：预览影响面 → 确认（破坏性手输表名）→ 执行 + 写入记录
+        │   └── 其余：结果/表格/图表/数据源/库表/模型/历史/回看/确认框/TierSwitch（提问区档位开关）
+        └── styles/             # tokens · base · layout · components · tasks · write
 ```
 
 ## 可观测性与运行配置
@@ -336,6 +426,10 @@ basic/
 | `SOURCE_INSIGHT_TTL_S` | `600` | 数据源洞察缓存秒数 |
 | `LOG_LEVEL` / `CORS_ORIGINS` | `INFO` / 本机 5173·5174 | 日志级别 / 跨域白名单 |
 | `MAX_UPLOAD_MB` / `MAX_IMPORT_ROWS` | 20 / 20 万 | 文件导入上限 |
+| `AGENT_ALLOW_WRITES` | `false` | **写能力总闸**：关着时任何写语句都拒（代码进公开仓库 ≠ 线上能写） |
+| `WRITE_MAX_AFFECTED_ROWS` | `5000` | 单次写入预估影响行数上限，超过就拒 |
+| `WRITE_AUTO_BACKUP` | `true` | 写前自动备份（关掉时 DROP/TRUNCATE/删列 一并拒绝执行） |
+| `WRITE_BACKUP_PREFIX` | `_bak` | 备份表名前缀（非标识符字符会被剔除） |
 
 日志刻意覆盖三件"以前静默发生"的事：**LLM 调用失败降级为规则兜底**、**查询执行失败**、
 **超过 1s 的慢请求**；元数据库不可用导致的降级也打 ERROR。日志统一脱敏，
@@ -349,6 +443,8 @@ basic/
 | SQL 执行时 | 执行器**二次**过安全门 + `SET SESSION max_execution_time` + 行数封顶（多取一行判截断） |
 | 人工确认 | 意图确认 → SQL 确认，两层都落在后端会话状态，未确认 409；执行必须带 `session_id` |
 | 手工改 SQL | 可执行改写版，但仍强制 `sql_confirmed` + 二次安全校验；执行成功后回写会话以便溯源 |
+| 写通道（独立于只读门） | 四层：总闸 `AGENT_ALLOW_WRITES` ∧ 源上限 `allowed_ops` ∧ 本次档位 ∧ `confirmed`/确认词；硬编码单语句、同库作用域、系统与元数据库禁写、UPDATE/DELETE 必带 WHERE、影响行数上限；执行顺序「估影响 → 备份 → 落刀」，三态全落审计 |
+| 写通道的界面 | 显示的是**生效值**而非请求值：总闸关着就显示只读、高档位禁选并写明原因，不让人点了才吃 403；纯逻辑在 `src/lib/writeGate.ts`，配 14 项测试与反向验证脚本 |
 | 账号 | 建议单独创建仅 SELECT 权限的 MySQL 账号（运维层最后防线） |
 | 脱敏 | 异常统一去除连接串/IP/栈信息后才返回前端 |
 
@@ -362,6 +458,9 @@ basic/
   就会在下次重启时静默降级（见 `storage/mysql_store.py:_mysql_credential_source`）。
 - 删项目时会话移回「未分组」，但**任务清单随项目一起删**：待办是围绕这个项目的数据提出来的，
   挪到未分组只会变成没人认领的噪音。
+- 写通道的聊天侧已经能用（「权限」档位开关 + 「写 SQL」影响面确认卡 + 写入记录），
+  但**写语句仍由人手工写**：P1 不让 LLM 生成写语句，Agent 只负责解读结果。
+  也不支持跨库写与多表 JOIN 的 UPDATE/DELETE（备份与行数预估只在单表上准确）。
 - 「数据源洞察」分两段取：**事实层**（元数据 + 按列聚合 + 规则建议）实测 5 张表 1.8 秒，
   默认只返回它，所以第一步不再干等大模型；**业务化叙述**（LLM）实测 120~155 秒，改成面板后台
   单独取一次（`narrate=true`，独立缓存键），期间事实与结论照常可读可跳转下一步。

@@ -1,11 +1,15 @@
 /* 数据源面板（底部弹出）：清单 + 激活切换 + 测试连接 + 编辑 / 删除 + 新增 MySQL 连接。
-   文件导入在输入区（上传后自动建源并激活），这里只管已有数据源。 */
+   文件导入在输入区（上传后自动建源并激活），这里只管已有数据源。
+   「写权限上限」也在这里给：源能不能被写是人的决定，Agent 自己抬不了这个上限。 */
 import { useState } from 'react'
 import { useApp, useTestConnection } from '../state/AppProvider'
 import { datasourceApi } from '../api'
-import type { Datasource, DatasourceCreate } from '../api/types'
+import type { Datasource, DatasourceCreate, PermTier } from '../api/types'
 import { errMessage, useAction } from '../hooks/useAsync'
 import { AsyncView, Chip } from './Primitives'
+import { TIER_LABEL } from '../lib/writeGate'
+
+const OPS: PermTier[] = ['read', 'write_dml', 'write_ddl']
 
 export function DataSourcePanel() {
   const app = useApp()
@@ -13,6 +17,7 @@ export function DataSourcePanel() {
   const [editing, setEditing] = useState<Datasource | null>(null)
   const remove = useAction(app.removeDs)
   const switchDs = useAction(app.switchDs)
+  const ops = useAction(app.markDsOps)
 
   async function onRemove(ds: Datasource) {
     if (!confirm(`删除数据源「${ds.name}」？${ds.type === 'file' ? '（连同导入的数据文件）' : ''}`)) return
@@ -45,6 +50,23 @@ export function DataSourcePanel() {
                     {test.results[ds.id].msg}
                   </span>
                 )}
+                {ds.type === 'mysql' ? (
+                  <label className="ds-ops" title="这个源允许的最高写档位；提问区的开关不能超过它">
+                    <span>写权限上限</span>
+                    <select value={ds.allowed_ops ?? 'read'}
+                            disabled={ops.pending}
+                            onChange={(e) => void ops.run(ds.id, e.target.value as PermTier)}>
+                      {OPS.map((t) => (
+                        <option key={t} value={t}>
+                          {TIER_LABEL[t]}{t === 'read' ? '（默认）' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {(ds.allowed_ops ?? 'read') !== 'read' && <Chip tone="warn">可写</Chip>}
+                  </label>
+                ) : (
+                  <p className="ds-ops-hint">文件源只读（SQLite 以只读模式打开），标记可写会被后端拒</p>
+                )}
               </div>
               <div className="ds-actions">
                 <button className="btn-ghost btn-xs" onClick={() => void test.run(ds.id)}
@@ -64,6 +86,12 @@ export function DataSourcePanel() {
 
       {remove.error && <p className="note note-bad">{errMessage(remove.error)}</p>}
       {switchDs.error && <p className="note note-bad">{switchDs.error}</p>}
+      {ops.error && (
+        <p className="note note-bad">
+          写权限上限没改成功：{ops.error}
+          （总闸 AGENT_ALLOW_WRITES 是环境变量，这里改的是"单个源最多允许到哪档"）
+        </p>
+      )}
 
       <div className="ds-form-wrap">
         <div className="ds-form-head">

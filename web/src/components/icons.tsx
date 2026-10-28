@@ -260,3 +260,15 @@ export function ModelIcon() {
     </svg>
   )
 }
+
+/** 权限档位（盾牌） */
+export function ShieldIcon() {
+  return (
+    <svg {...D}>
+      <path d="M8 2.2l4.4 1.6v3.4c0 2.6-1.8 4.6-4.4 5.6-2.6-1-4.4-3-4.4-5.6V3.8L8 2.2z"
+            fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M6 8.1l1.5 1.5L10.3 6.6" fill="none" stroke="currentColor"
+            strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}

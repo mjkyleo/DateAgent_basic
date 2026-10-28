@@ -129,6 +129,26 @@ class MysqlAdapter(DataSourceAdapter):
                 "cost_ms": int((time.perf_counter() - t0) * 1000),
                 "truncated": truncated}
 
+    # ------------------------------------------------------------ 写通道
+    supports_write = True
+
+    def execute_write(self, sql: str, *, timeout: int = 10) -> Dict[str, Any]:
+        """执行一条写语句（DML/DDL）并提交，返回 {affected_rows, cost_ms}。
+
+        engine.begin() 出去即提交、抛异常即回滚，所以 DML 的失败不会留下半截改动；
+        DDL 在 MySQL 里隐式提交，事务帮不上忙，靠的是执行前的整表备份。
+
+        这里**没有**沿用只读通道的 max_execution_time：那个会话变量只对 SELECT 生效，
+        写上只会让人误以为 UPDATE/DELETE 也有超时兜底。真要防长事务得靠
+        业务侧的行数封顶（write_max_affected_rows）与 lock_wait_timeout。
+        """
+        t0 = time.perf_counter()
+        with self.engine.begin() as conn:
+            result = conn.execute(text(sql))
+            affected = int(result.rowcount or 0)
+        return {"affected_rows": affected,
+                "cost_ms": int((time.perf_counter() - t0) * 1000)}
+
     def close(self) -> None:
         self.engine.dispose()
 
